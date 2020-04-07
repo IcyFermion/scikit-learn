@@ -7,6 +7,8 @@
 #
 # License: BSD 3 clause
 
+#outpredict: added "feature_weight"
+
 # See _splitter.pyx for details.
 
 import numpy as np
@@ -30,6 +32,12 @@ cdef struct SplitRecord:
     double improvement     # Impurity improvement given parent node.
     double impurity_left   # Impurity of the left split.
     double impurity_right  # Impurity of the right split.
+
+#outpredict
+# cdef struct SplitRecord2:
+#     # Data to track sample split
+#     DOUBLE_t* features_sampled # Array containing all the features sampled
+#END outpredict
 
 cdef class Splitter:
     # The splitter searches in the input space for a feature and a threshold
@@ -63,6 +71,8 @@ cdef class Splitter:
     cdef const DOUBLE_t[:, ::1] y
     cdef DOUBLE_t* sample_weight
 
+    cdef DOUBLE_t* feature_weight
+
     # The samples vector `samples` is maintained by the Splitter object such
     # that the samples contained in a node are contiguous. With this setting,
     # `node_split` reorganizes the node samples `samples[start:end]` in two
@@ -82,15 +92,17 @@ cdef class Splitter:
     # Methods
     cdef int init(self, object X, const DOUBLE_t[:, ::1] y,
                   DOUBLE_t* sample_weight,
+                  DOUBLE_t* feature_weight,
                   np.ndarray X_idx_sorted=*) except -1
 
     cdef int node_reset(self, SIZE_t start, SIZE_t end,
                         double* weighted_n_node_samples) nogil except -1
 
+    #outpredict - add SplitRecord2* split2 to function
     cdef int node_split(self,
                         double impurity,   # Impurity of the node
                         SplitRecord* split,
-                        SIZE_t* n_constant_features) nogil except -1
+                        SIZE_t* n_constant_features) nogil except -1#, SplitRecord2* split2) nogil except -1
 
     cdef void node_value(self, double* dest) nogil
 

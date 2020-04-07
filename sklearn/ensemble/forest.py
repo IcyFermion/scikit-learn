@@ -40,6 +40,9 @@ Single and multi-output problems are both handled.
 # License: BSD 3 clause
 
 
+#outpredict Modification: added "feature_weight", "feature_weights"
+
+
 from warnings import catch_warnings, simplefilter, warn
 import threading
 
@@ -51,6 +54,10 @@ from scipy.sparse import hstack as sparse_hstack
 from ..base import ClassifierMixin, RegressorMixin, MultiOutputMixin
 from ..utils._joblib import Parallel, delayed
 from ..metrics import r2_score
+
+#####outpredict
+#from ..metrics import mean_squared_error
+
 from ..preprocessing import OneHotEncoder
 from ..tree import (DecisionTreeClassifier, DecisionTreeRegressor,
                     ExtraTreeClassifier, ExtraTreeRegressor)
@@ -60,6 +67,10 @@ from ..exceptions import DataConversionWarning, NotFittedError
 from .base import BaseEnsemble, _partition_estimators
 from ..utils.fixes import parallel_helper, _joblib_parallel_args
 from ..utils.multiclass import check_classification_targets
+
+#outpredict
+#import matplotlib.pyplot as plt
+
 from ..utils.validation import check_is_fitted
 
 
@@ -91,7 +102,7 @@ def _generate_unsampled_indices(random_state, n_samples):
     return unsampled_indices
 
 
-def _parallel_build_trees(tree, forest, X, y, sample_weight, tree_idx, n_trees,
+def _parallel_build_trees(tree, forest, X, y, sample_weight, feature_weights, tree_idx, n_trees,
                           verbose=0, class_weight=None):
     """Private function used to fit a single tree in parallel."""
     if verbose > 1:
@@ -115,9 +126,11 @@ def _parallel_build_trees(tree, forest, X, y, sample_weight, tree_idx, n_trees,
         elif class_weight == 'balanced_subsample':
             curr_sample_weight *= compute_sample_weight('balanced', y, indices)
 
-        tree.fit(X, y, sample_weight=curr_sample_weight, check_input=False)
+        # outpredict
+        curr_feature_weight = feature_weights.copy()
+        tree.fit(X, y, sample_weight=curr_sample_weight, check_input=False, feature_weight=curr_feature_weight)
     else:
-        tree.fit(X, y, sample_weight=sample_weight, check_input=False)
+        tree.fit(X, y, sample_weight=sample_weight, check_input=False, feature_weight=feature_weights)
 
     return tree
 
@@ -153,6 +166,10 @@ class BaseForest(BaseEnsemble, MultiOutputMixin, metaclass=ABCMeta):
         self.verbose = verbose
         self.warm_start = warm_start
         self.class_weight = class_weight
+
+        #outpredict
+        # self.features_sampled_distr_overall = None
+        # self.bestfeatures_sampled_distr_overall = None
 
     def apply(self, X):
         """Apply trees in the forest to X, return leaf indices.
@@ -214,7 +231,7 @@ class BaseForest(BaseEnsemble, MultiOutputMixin, metaclass=ABCMeta):
 
         return sparse_hstack(indicators).tocsr(), n_nodes_ptr
 
-    def fit(self, X, y, sample_weight=None):
+    def fit(self, X, y, sample_weight=None, feature_weight=None):
         """Build a forest of trees from the training set (X, y).
 
         Parameters
@@ -239,6 +256,9 @@ class BaseForest(BaseEnsemble, MultiOutputMixin, metaclass=ABCMeta):
         -------
         self : object
         """
+        # Debug
+        #outpredict
+        #print(":::::::::::::::Running OutPredict WITH Priors....biasing features using weights:::::::::::::::")
 
         if self.n_estimators == 'warn':
             warn("The default value of n_estimators will change from "
@@ -325,7 +345,7 @@ class BaseForest(BaseEnsemble, MultiOutputMixin, metaclass=ABCMeta):
             trees = Parallel(n_jobs=self.n_jobs, verbose=self.verbose,
                              **_joblib_parallel_args(prefer='threads'))(
                 delayed(_parallel_build_trees)(
-                    t, self, X, y, sample_weight, i, len(trees),
+                    t, self, X, y, sample_weight, feature_weight, i, len(trees),
                     verbose=self.verbose, class_weight=self.class_weight)
                 for i, t in enumerate(trees))
 
@@ -358,6 +378,50 @@ class BaseForest(BaseEnsemble, MultiOutputMixin, metaclass=ABCMeta):
 
         return self.estimators_[0]._validate_X_predict(X, check_input=True)
 
+    #outpredict
+    # def plotHist(self, features_distribution_overall, pdfname):
+    #     #from matplotlib.backends.backend_pdf import PdfPages
+    #     #pp = PdfPages('/Users/Jacopo/foo.pdf')
+    #     #pp = PdfPages(self.outputpath+'/'+self.name_model+'_Histogram'+pdfname+'features'+'.pdf')
+    #     plt.clf()
+    #     plt.close()
+    #     fig = plt.figure(figsize=(20,10))
+    #     ax = fig.add_subplot(1,1,1)
+    #
+    #     #bins = 0 to number of features + 1
+    #     ax.hist(features_distribution_overall, range(0,self.n_features_ + 1))
+    #
+    #     #plt.xticks(0,self.n_features_, 5)
+    #
+    #
+    #     if self.n_features_ > 40:
+    #         ax.set_xticks(np.arange(0,self.n_features_, 2))
+    #         for tick in ax.xaxis.get_major_ticks():
+    #             tick.label.set_fontsize(10)
+    #
+    #     ax.set_aspect('auto')
+    #     #http://stackoverflow.com/questions/28931224/adding-value-labels-on-a-matplotlib-bar-chart
+    #     # rects = ax.patches
+    #     # labels = ["%d" % i for i in xrange(len(rects))]
+    #
+    #     # for rect, label in zip(rects, labels):
+    #     #     height = rect.get_height()
+    #     #     ax.text(rect.get_x() + rect.get_width()/2, height + 5, label, ha='center', va='bottom')
+    #
+    #
+    #
+    #     ax.set_title("Histogram: frequency of "+pdfname+" features")
+    #
+    #
+    #     ax.set_xlabel('Features')
+    #     ax.set_ylabel('Num of times')
+    #
+    #     plt.savefig(self.outputpath+'/'+self.name_model+'_Histogram'+pdfname+'features'+'.pdf')
+    #     #pp.savefig(fig)
+    #     #pp.close()
+    #END outpredict
+
+
     @property
     def feature_importances_(self):
         """Return the feature importances (the higher, the more important the
@@ -382,6 +446,23 @@ class BaseForest(BaseEnsemble, MultiOutputMixin, metaclass=ABCMeta):
 
         all_importances = np.mean(all_importances,
                                   axis=0, dtype=np.float64)
+
+        # outpredict
+        # for tree in self.estimators_:
+        #     if self.features_sampled_distr_overall is None:
+        #         self.features_sampled_distr_overall = tree.features_sampled_distr
+        #     else:
+        #         self.features_sampled_distr_overall = np.concatenate([self.features_sampled_distr_overall, tree.features_sampled_distr])
+
+        #     if self.bestfeatures_sampled_distr_overall is None:
+        #         self.bestfeatures_sampled_distr_overall = tree.bestfeatures_sampled_distr
+        #     else:
+        #         self.bestfeatures_sampled_distr_overall = np.concatenate([self.bestfeatures_sampled_distr_overall, tree.bestfeatures_sampled_distr])
+
+        # self.plotHist(self.features_sampled_distr_overall, "Sampled")
+        # self.plotHist(self.bestfeatures_sampled_distr_overall, "Best")
+        # END outpredict
+
         return all_importances / np.sum(all_importances)
 
 
@@ -1258,6 +1339,7 @@ class RandomForestRegressor(ForestRegressor):
     --------
     DecisionTreeRegressor, ExtraTreesRegressor
     """
+    # outpredict - added name_model and outputpath
     def __init__(self,
                  n_estimators='warn',
                  criterion="mse",
@@ -1275,6 +1357,8 @@ class RandomForestRegressor(ForestRegressor):
                  random_state=None,
                  verbose=0,
                  warm_start=False):
+                 # name_model="",
+                 # outputpath=""):
         super().__init__(
             base_estimator=DecisionTreeRegressor(),
             n_estimators=n_estimators,
@@ -1299,7 +1383,9 @@ class RandomForestRegressor(ForestRegressor):
         self.max_leaf_nodes = max_leaf_nodes
         self.min_impurity_decrease = min_impurity_decrease
         self.min_impurity_split = min_impurity_split
-
+        #outpredict
+        # self.name_model = name_model
+        # self.outputpath = outputpath
 
 class ExtraTreesClassifier(ForestClassifier):
     """An extra-trees classifier.
@@ -1956,7 +2042,7 @@ class RandomTreesEmbedding(BaseForest):
     def _set_oob_score(self, X, y):
         raise NotImplementedError("OOB score not supported by tree embedding")
 
-    def fit(self, X, y=None, sample_weight=None):
+    def fit(self, X, y=None, sample_weight=None, feature_weight=None):
         """Fit estimator.
 
         Parameters

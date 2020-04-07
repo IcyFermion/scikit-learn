@@ -15,6 +15,7 @@ randomized trees. Single and multi-output problems are both handled.
 # License: BSD 3 clause
 
 
+#outpredict Modification added feature_weight
 
 import numbers
 import warnings
@@ -107,6 +108,10 @@ class BaseDecisionTree(BaseEstimator, MultiOutputMixin, metaclass=ABCMeta):
         self.class_weight = class_weight
         self.presort = presort
 
+        #outpredict
+        # self.features_sampled_distr = None
+        # self.bestfeatures_sampled_distr = None
+
     def get_depth(self):
         """Returns the depth of the decision tree.
 
@@ -123,7 +128,7 @@ class BaseDecisionTree(BaseEstimator, MultiOutputMixin, metaclass=ABCMeta):
         return self.tree_.n_leaves
 
     def fit(self, X, y, sample_weight=None, check_input=True,
-            X_idx_sorted=None):
+            X_idx_sorted=None, feature_weight=None):
 
         random_state = check_random_state(self.random_state)
         if check_input:
@@ -358,7 +363,8 @@ class BaseDecisionTree(BaseEstimator, MultiOutputMixin, metaclass=ABCMeta):
                                                 random_state,
                                                 self.presort)
 
-        self.tree_ = Tree(self.n_features_, self.n_classes_, self.n_outputs_)
+        # outpredict - add max_features
+        self.tree_ = Tree(self.n_features_, self.n_classes_, self.n_outputs_)#, self.max_features_)
 
         # Use BestFirst if max_leaf_nodes given; use DepthFirst otherwise
         if max_leaf_nodes < 0:
@@ -377,7 +383,8 @@ class BaseDecisionTree(BaseEstimator, MultiOutputMixin, metaclass=ABCMeta):
                                            self.min_impurity_decrease,
                                            min_impurity_split)
 
-        builder.build(self.tree_, X, y, sample_weight, X_idx_sorted)
+        # outpredict - feature_weight added
+        builder.build(self.tree_, X, y, sample_weight, X_idx_sorted, feature_weight)
 
         if self.n_outputs_ == 1:
             self.n_classes_ = self.n_classes_[0]
@@ -525,6 +532,22 @@ class BaseDecisionTree(BaseEstimator, MultiOutputMixin, metaclass=ABCMeta):
         check_is_fitted(self, 'tree_')
 
         return self.tree_.compute_feature_importances()
+
+        # outpredict
+        #output_featimp = self.tree_.compute_feature_importances()
+
+        # Debug
+        # print "output_featimp", output_featimp[1]
+
+        # self.features_sampled_distr = output_featimp[1]
+
+        # #Debug
+        # #print self.features_sampled_distr
+
+        # self.bestfeatures_sampled_distr = output_featimp[2]
+
+        #return output_featimp[0]
+        # END outpredict
 
 
 # =============================================================================
@@ -774,7 +797,7 @@ class DecisionTreeClassifier(BaseDecisionTree, ClassifierMixin):
             presort=presort)
 
     def fit(self, X, y, sample_weight=None, check_input=True,
-            X_idx_sorted=None):
+            X_idx_sorted=None, feature_weight=None):
         """Build a decision tree classifier from the training set (X, y).
 
         Parameters
@@ -813,7 +836,8 @@ class DecisionTreeClassifier(BaseDecisionTree, ClassifierMixin):
             X, y,
             sample_weight=sample_weight,
             check_input=check_input,
-            X_idx_sorted=X_idx_sorted)
+            X_idx_sorted=X_idx_sorted,
+            feature_weight=feature_weight)
         return self
 
     def predict_proba(self, X, check_input=True):
@@ -1116,7 +1140,7 @@ class DecisionTreeRegressor(BaseDecisionTree, RegressorMixin):
             presort=presort)
 
     def fit(self, X, y, sample_weight=None, check_input=True,
-            X_idx_sorted=None):
+            X_idx_sorted=None, feature_weight=None):
         """Build a decision tree regressor from the training set (X, y).
 
         Parameters
@@ -1154,7 +1178,8 @@ class DecisionTreeRegressor(BaseDecisionTree, RegressorMixin):
             X, y,
             sample_weight=sample_weight,
             check_input=check_input,
-            X_idx_sorted=X_idx_sorted)
+            X_idx_sorted=X_idx_sorted,
+            feature_weight=feature_weight)
         return self
 
 

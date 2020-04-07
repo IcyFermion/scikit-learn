@@ -8,6 +8,8 @@
 #
 # License: BSD 3 clause
 
+#Jacopo Modification added feature_weight
+
 # See _tree.pyx for details.
 
 import numpy as np
@@ -22,6 +24,11 @@ ctypedef np.npy_uint32 UINT32_t          # Unsigned 32 bit integer
 from ._splitter cimport Splitter
 from ._splitter cimport SplitRecord
 
+
+#outpredict
+#from ._splitter cimport SplitRecord2
+#End outpredict
+
 cdef struct Node:
     # Base storage structure for the nodes in a Tree object
 
@@ -32,6 +39,9 @@ cdef struct Node:
     DOUBLE_t impurity                    # Impurity of the node (i.e., the value of the criterion)
     SIZE_t n_node_samples                # Number of samples at the node
     DOUBLE_t weighted_n_node_samples     # Weighted number of samples at the node
+    #outpredict
+    #DOUBLE_t* features_sampled # Array containing all the features sampled
+    #End outpredict
 
 
 cdef class Tree:
@@ -54,11 +64,15 @@ cdef class Tree:
     cdef double* value                   # (capacity, n_outputs, max_n_classes) array of values
     cdef SIZE_t value_stride             # = n_outputs * max_n_classes
 
+    #outpredict - max_features added
+    #cdef int max_features
+
+    #outpredict - features_sampled added
     # Methods
     cdef SIZE_t _add_node(self, SIZE_t parent, bint is_left, bint is_leaf,
                           SIZE_t feature, double threshold, double impurity,
                           SIZE_t n_node_samples,
-                          double weighted_n_samples) nogil except -1
+                          double weighted_n_samples) nogil except -1#, DOUBLE_t* features_sampled) nogil except -1
     cdef int _resize(self, SIZE_t capacity) nogil except -1
     cdef int _resize_c(self, SIZE_t capacity=*) nogil except -1
 
@@ -101,5 +115,6 @@ cdef class TreeBuilder:
 
     cpdef build(self, Tree tree, object X, np.ndarray y,
                 np.ndarray sample_weight=*,
-                np.ndarray X_idx_sorted=*)
+                np.ndarray X_idx_sorted=*,
+                np.ndarray feature_weight=*)
     cdef _check_input(self, object X, np.ndarray y, np.ndarray sample_weight)

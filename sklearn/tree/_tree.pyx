@@ -16,6 +16,8 @@
 #
 # License: BSD 3 clause
 
+#outpredict Modification added feature_weight
+
 from cpython cimport Py_INCREF, PyObject
 
 from libc.stdlib cimport free
@@ -92,7 +94,8 @@ cdef class TreeBuilder:
 
     cpdef build(self, Tree tree, object X, np.ndarray y,
                 np.ndarray sample_weight=None,
-                np.ndarray X_idx_sorted=None):
+                np.ndarray X_idx_sorted=None,
+                np.ndarray feature_weight=None):
         """Build a decision tree from the training set (X, y)."""
         pass
 
@@ -144,7 +147,8 @@ cdef class DepthFirstTreeBuilder(TreeBuilder):
 
     cpdef build(self, Tree tree, object X, np.ndarray y,
                 np.ndarray sample_weight=None,
-                np.ndarray X_idx_sorted=None):
+                np.ndarray X_idx_sorted=None,
+                np.ndarray feature_weight=None):
         """Build a decision tree from the training set (X, y)."""
 
         # check input
@@ -153,6 +157,12 @@ cdef class DepthFirstTreeBuilder(TreeBuilder):
         cdef DOUBLE_t* sample_weight_ptr = NULL
         if sample_weight is not None:
             sample_weight_ptr = <DOUBLE_t*> sample_weight.data
+
+        #outpredict
+        cdef DOUBLE_t* feature_weight_ptr = NULL
+        if feature_weight is not None:
+            feature_weight_ptr = <DOUBLE_t*> feature_weight.data
+        #End outpredict
 
         # Initial capacity
         cdef int init_capacity
@@ -174,7 +184,7 @@ cdef class DepthFirstTreeBuilder(TreeBuilder):
         cdef double min_impurity_split = self.min_impurity_split
 
         # Recursive partition (without actual recursion)
-        splitter.init(X, y, sample_weight_ptr, X_idx_sorted)
+        splitter.init(X, y, sample_weight_ptr, feature_weight_ptr, X_idx_sorted)
 
         cdef SIZE_t start
         cdef SIZE_t end
@@ -196,6 +206,11 @@ cdef class DepthFirstTreeBuilder(TreeBuilder):
 
         cdef Stack stack = Stack(INITIAL_STACK_SIZE)
         cdef StackRecord stack_record
+
+        #oupredict
+        #cdef SplitRecord2 split2
+        #END outpredict
+
 
         with nogil:
             # push root node onto stack
@@ -232,7 +247,8 @@ cdef class DepthFirstTreeBuilder(TreeBuilder):
                            (impurity <= min_impurity_split))
 
                 if not is_leaf:
-                    splitter.node_split(impurity, &split, &n_constant_features)
+                    #outpredict - add split2 to function
+                    splitter.node_split(impurity, &split, &n_constant_features)#, &split2)
                     # If EPSILON=0 in the below comparison, float precision
                     # issues stop splitting, producing trees that are
                     # dissimilar to v0.18
@@ -240,10 +256,14 @@ cdef class DepthFirstTreeBuilder(TreeBuilder):
                                (split.improvement + EPSILON <
                                 min_impurity_decrease))
 
+                #outpredict - add split2.features_sampled to function
                 node_id = tree._add_node(parent, is_left, is_leaf, split.feature,
                                          split.threshold, impurity, n_node_samples,
-                                         weighted_n_node_samples)
+                                         weighted_n_node_samples)#, split2.features_sampled)
 
+                #Debug outpredict
+                # with gil:
+                #     print X, y
                 if node_id == <SIZE_t>(-1):
                     rc = -1
                     break
@@ -267,6 +287,12 @@ cdef class DepthFirstTreeBuilder(TreeBuilder):
 
                 if depth > max_depth_seen:
                     max_depth_seen = depth
+
+            #Debug outpredict
+            # with gil:
+            #     import sys
+            #     sys.exit()
+            #End Debug
 
             if rc >= 0:
                 rc = tree._resize_c(tree.node_count)
@@ -314,15 +340,22 @@ cdef class BestFirstTreeBuilder(TreeBuilder):
 
     cpdef build(self, Tree tree, object X, np.ndarray y,
                 np.ndarray sample_weight=None,
-                np.ndarray X_idx_sorted=None):
+                np.ndarray X_idx_sorted=None,
+                np.ndarray feature_weight=None):
         """Build a decision tree from the training set (X, y)."""
 
         # check input
         X, y, sample_weight = self._check_input(X, y, sample_weight)
 
+        #outpredict
         cdef DOUBLE_t* sample_weight_ptr = NULL
         if sample_weight is not None:
             sample_weight_ptr = <DOUBLE_t*> sample_weight.data
+
+        cdef DOUBLE_t* feature_weight_ptr = NULL
+        if feature_weight is not None:
+            feature_weight_ptr = <DOUBLE_t*> feature_weight.data
+        #END outpredict
 
         # Parameters
         cdef Splitter splitter = self.splitter
@@ -332,7 +365,7 @@ cdef class BestFirstTreeBuilder(TreeBuilder):
         cdef SIZE_t min_samples_split = self.min_samples_split
 
         # Recursive partition (without actual recursion)
-        splitter.init(X, y, sample_weight_ptr, X_idx_sorted)
+        splitter.init(X, y, sample_weight_ptr, feature_weight_ptr, X_idx_sorted)
 
         cdef PriorityHeap frontier = PriorityHeap(INITIAL_STACK_SIZE)
         cdef PriorityHeapRecord record
@@ -443,6 +476,10 @@ cdef class BestFirstTreeBuilder(TreeBuilder):
         cdef SIZE_t n_left, n_right
         cdef double imp_diff
 
+        #outpredict
+        #cdef SplitRecord2 split2
+        #END outpredict
+
         splitter.node_reset(start, end, &weighted_n_node_samples)
 
         if is_first:
@@ -456,18 +493,20 @@ cdef class BestFirstTreeBuilder(TreeBuilder):
                    impurity <= min_impurity_split)
 
         if not is_leaf:
-            splitter.node_split(impurity, &split, &n_constant_features)
+            #outpredict
+            splitter.node_split(impurity, &split, &n_constant_features)#, &split2)
             # If EPSILON=0 in the below comparison, float precision issues stop
             # splitting early, producing trees that are dissimilar to v0.18
             is_leaf = (is_leaf or split.pos >= end or
                        split.improvement + EPSILON < min_impurity_decrease)
 
+        #outpredict - add split2.features_sampled to function
         node_id = tree._add_node(parent - tree.nodes
                                  if parent != NULL
                                  else _TREE_UNDEFINED,
                                  is_left, is_leaf,
                                  split.feature, split.threshold, impurity, n_node_samples,
-                                 weighted_n_node_samples)
+                                 weighted_n_node_samples)#, split2.features_sampled)
         if node_id == <SIZE_t>(-1):
             return -1
 
@@ -603,14 +642,18 @@ cdef class Tree:
         def __get__(self):
             return self._get_value_ndarray()[:self.node_count]
 
+    #outpredict - add max_features
     def __cinit__(self, int n_features, np.ndarray[SIZE_t, ndim=1] n_classes,
-                  int n_outputs):
+                  int n_outputs):#, int max_features):
         """Constructor."""
         # Input/Output layout
         self.n_features = n_features
         self.n_outputs = n_outputs
         self.n_classes = NULL
         safe_realloc(&self.n_classes, n_outputs)
+
+        #outpredict - add max_features
+        #self.max_features = max_features
 
         self.max_n_classes = np.max(n_classes)
         self.value_stride = n_outputs * self.max_n_classes
@@ -633,11 +676,12 @@ cdef class Tree:
         free(self.value)
         free(self.nodes)
 
+    #outpredict - add max_features
     def __reduce__(self):
         """Reduce re-implementation, for pickling."""
         return (Tree, (self.n_features,
                        sizet_ptr_to_ndarray(self.n_classes, self.n_outputs),
-                       self.n_outputs), self.__getstate__())
+                       self.n_outputs), self.__getstate__())#, self.max_features), self.__getstate__())
 
     def __getstate__(self):
         """Getstate re-implementation, for pickling."""
@@ -724,10 +768,11 @@ cdef class Tree:
         self.capacity = capacity
         return 0
 
+    #outpredict - added features_sampled
     cdef SIZE_t _add_node(self, SIZE_t parent, bint is_left, bint is_leaf,
                           SIZE_t feature, double threshold, double impurity,
                           SIZE_t n_node_samples,
-                          double weighted_n_node_samples) nogil except -1:
+                          double weighted_n_node_samples) nogil except -1:#, DOUBLE_t* features_sampled) nogil except -1:
         """Add a node to the tree.
 
         The new node registers itself as the child of its parent.
@@ -761,6 +806,10 @@ cdef class Tree:
             # left_child and right_child will be set later
             node.feature = feature
             node.threshold = threshold
+
+        #outpredict
+        #node.features_sampled = features_sampled
+        #END outpredict
 
         self.node_count += 1
 
@@ -1064,10 +1113,43 @@ cdef class Tree:
         importances = np.zeros((self.n_features,))
         cdef DOUBLE_t* importance_data = <DOUBLE_t*>importances.data
 
+
+        #outpredict
+        #Debug
+        #print "nodecount and maxfeatures", int(self.node_count), int(self.max_features)
+        # cdef np.ndarray[np.float64_t, ndim=1] features_sampled_np
+        # features_sampled_np = np.zeros(int(int(self.node_count)*int(self.max_features)))
+
+        # cdef np.ndarray[np.float64_t, ndim=1] bestfeatures_sampled_np
+        # bestfeatures_sampled_np = np.zeros(int(self.node_count))
+
+
+        #kk=0
+        #END outpredict
         with nogil:
             while node != end_node:
                 if node.left_child != _TREE_LEAF:
                     # ... and node.right_child != _TREE_LEAF:
+
+
+                    #outpredict
+                    # with gil:
+                    #     #Debug
+                    #     #print "For this node best feature used is: ", node.feature, "!"
+                    #     bestfeatures_sampled_np[kk] = node.feature
+
+                    #     for k in range(0, self.max_features):
+                    #         fs = node.features_sampled[k]
+                    #         indx_ndarr = k + (kk * int(self.max_features))
+                    #         features_sampled_np[indx_ndarr] = int(fs)
+
+                    #         #Debug
+                    #         #print "features_sampled_np", features_sampled_np[indx_ndarr]
+
+
+                    #     kk+=1
+                    #END outpredict
+
                     left = &nodes[node.left_child]
                     right = &nodes[node.right_child]
 
@@ -1086,7 +1168,18 @@ cdef class Tree:
                 # Avoid dividing by zero (e.g., when root is pure)
                 importances /= normalizer
 
-        return importances
+        #outpredict
+        # notleaf_index = int(int(kk)*int(self.max_features))
+        # #Dbeug
+        # #print features_sampled_np
+        # features_sampled_np = features_sampled_np[:notleaf_index]
+        # #Debug
+        # #print features_sampled_np
+
+        # bestfeatures_sampled_np = bestfeatures_sampled_np[:kk]
+        #END outpredict
+
+        return importances#, features_sampled_np, bestfeatures_sampled_np
 
     cdef np.ndarray _get_value_ndarray(self):
         """Wraps value as a 3-d NumPy array.

@@ -15,6 +15,8 @@
 #
 # License: BSD 3 clause
 
+#outpredict Modification: added "feature_weight"
+
 from ._criterion cimport Criterion
 
 from libc.stdlib cimport free
@@ -118,6 +120,7 @@ cdef class Splitter:
                    object X,
                    const DOUBLE_t[:, ::1] y,
                    DOUBLE_t* sample_weight,
+                   DOUBLE_t* feature_weight,
                    np.ndarray X_idx_sorted=None) except -1:
         """Initialize the splitter.
 
@@ -180,6 +183,9 @@ cdef class Splitter:
         self.y = y
 
         self.sample_weight = sample_weight
+
+        self.feature_weight = feature_weight
+
         return 0
 
     cdef int node_reset(self, SIZE_t start, SIZE_t end,
@@ -212,8 +218,9 @@ cdef class Splitter:
         weighted_n_node_samples[0] = self.criterion.weighted_n_node_samples
         return 0
 
+    #outpredict - add SplitRecord2* split2 to function
     cdef int node_split(self, double impurity, SplitRecord* split,
-                        SIZE_t* n_constant_features) nogil except -1:
+                        SIZE_t* n_constant_features) nogil except -1:#, SplitRecord2* split2) nogil except -1:
         """Find the best split on node samples[start:end].
 
         This is a placeholder method. The majority of computation will be done
@@ -262,6 +269,7 @@ cdef class BaseDenseSplitter(Splitter):
                   object X,
                   const DOUBLE_t[:, ::1] y,
                   DOUBLE_t* sample_weight,
+                  DOUBLE_t* feature_weight,
                   np.ndarray X_idx_sorted=None) except -1:
         """Initialize the splitter
 
@@ -270,7 +278,7 @@ cdef class BaseDenseSplitter(Splitter):
         """
 
         # Call parent init
-        Splitter.init(self, X, y, sample_weight)
+        Splitter.init(self, X, y, sample_weight, feature_weight)
 
         self.X = X
 
@@ -297,8 +305,9 @@ cdef class BestSplitter(BaseDenseSplitter):
                                self.random_state,
                                self.presort), self.__getstate__())
 
+    #outpredict - add SplitRecord2* split2 to function
     cdef int node_split(self, double impurity, SplitRecord* split,
-                        SIZE_t* n_constant_features) nogil except -1:
+                        SIZE_t* n_constant_features) nogil except -1:#, SplitRecord2* split2) nogil except -1:
         """Find the best split on node samples[start:end]
 
         Returns -1 in case of failure to allocate memory (and raise MemoryError)
@@ -346,11 +355,50 @@ cdef class BestSplitter(BaseDenseSplitter):
         cdef DTYPE_t current_feature_value
         cdef SIZE_t partition_end
 
+
+        #outpredict
+        cdef DOUBLE_t*  feature_weight = self.feature_weight
+
+        cdef SIZE_t ssw
+        cdef SIZE_t num_feat_to_sample
+
+        cdef SIZE_t k
+        cdef SIZE_t kk
+        cdef DOUBLE_t jk
+
+        cdef DOUBLE_t wsel
+        cdef DOUBLE_t tmp2
+
+        #cdef DOUBLE_t* sumweights = NULL
+        cdef SIZE_t* mind = NULL
+
+        # cdef SplitRecord2 split2_current
+        cdef DOUBLE_t* features_sampled = NULL # Array containing all the features sampled
+
+        with gil:
+            features_sampled = safe_realloc(&features_sampled, self.n_features)
+
+        with gil:
+            sumweights_nd = []
+        #END outpredict
+
         _init_split(&best, end)
 
         if self.presort == 1:
             for p in range(start, end):
                 sample_mask[samples[p]] = 1
+
+        #Debug outpredict
+        # for k in range(0,n_features):
+        #     jk = rand_uniform(0, 10, random_state)
+        #     feature_weight[k]=jk
+        # with gil:
+        #     for k in range(n_features):
+        #         print k, feature_weight[k]
+        #     for k in range(n_features):
+        #         print k, features[k]
+        #END Debug outpredict
+
 
         # Sample up to max_features without replacement using a
         # Fisher-Yates-based algorithm (using the local variables `f_i` and
@@ -367,6 +415,11 @@ cdef class BestSplitter(BaseDenseSplitter):
                  # At least one drawn features must be non constant
                  n_visited_features <= n_found_constants + n_drawn_constants)):
 
+            #outpredict-debug
+            #with gil:
+            #    print f_i, n_total_constants, n_visited_features, n_found_constants, n_drawn_constants
+            #outpredict- END debug
+
             n_visited_features += 1
 
             # Loop invariant: elements of features in
@@ -380,23 +433,183 @@ cdef class BestSplitter(BaseDenseSplitter):
             # - [f_i:n_features[ holds features that have been drawn
             #   and aren't constant.
 
+
+            #Previous way - feature: Draw a feature at random
             # Draw a feature at random
-            f_j = rand_int(n_drawn_constants, f_i - n_found_constants,
-                           random_state)
+            # f_j = rand_int(n_drawn_constants, f_i - n_found_constants,
+            #                random_state)
+            #END Previous way
+
+
+            #outpredict ***************************************************
+
+            #feature_weight, weights vector for all features:
+
+            #Num of features to sample from:
+            num_feat_to_sample = f_i - n_found_constants - n_drawn_constants
+
+            #Size of sumweights
+            #ssw = num_feat_to_sample + 1
+
+            with gil:
+                #sumweights = safe_realloc(&sumweights, ssw)
+                mind = safe_realloc(&mind, num_feat_to_sample)
+
+
+            #sumweights[0] = 0.0
+            with gil:
+                sumweights_nd.append(0)
+
+            #Debug
+            # with gil:
+            #     print "n_drawn_constants, n_known_constants"
+            #     print n_drawn_constants, n_known_constants
+            #     print "n_total_constants, f_i"
+            #     print n_total_constants, f_i
+            #End Debug
+
+
+            #We sample weights in the intervals [n_drawn_constants:n_known_constants[...
+            kk = 0
+            for k in range(n_drawn_constants, n_known_constants):
+                    with gil:
+                        sumweights_nd.append(feature_weight[k]+sumweights_nd[kk])
+                    #sumweights[kk+1]=feature_weight[k]+sumweights[kk]
+                    # change feature_weight to random(1,100)
+                    mind[kk] = k
+                    kk+=1
+                    # compute cumulative
+
+            #and in the interval [n_total_constants, f_i[
+            for k in range(n_total_constants, f_i):
+                    with gil:
+                        sumweights_nd.append(feature_weight[k]+sumweights_nd[kk])
+                    #sumweights[kk+1]=feature_weight[k]+sumweights[kk]
+                    mind[kk]= k - n_found_constants
+                    kk+=1
+                    # compute cumulative
+
+
+            #Generate a number between 0 and sumweights[-1]
+            with gil:
+                jk = rand_uniform(0, sumweights_nd[num_feat_to_sample], random_state)
+
+            with gil:
+                #k=1
+                #k = np.sum(np.asarray(sumweights_nd) < jk) #Find the index of the first weight over a random value.
+                for k in range(num_feat_to_sample):
+                    if (sumweights_nd[k+1] >= jk):
+                        if (sumweights_nd[k] <= jk):
+                            f_j=mind[k]# select variable */
+            #f_j = mind[k]# select variable */
+
+
+
+
+            #Random Code
+            #3) Other way - not complete
+            # bin_arr_tmp = int(sumweights < jk)
+            # k = self.cython_sum(bin_arr_tmp)
+            # #oupredict - cytho_sum method
+            # def cython_sum(np.ndarray[DOUBLE_t, ndim=1] y):
+            #     cdef double N = y.shape[0]
+            #     cdef double x = y[0]
+            #     cdef double i
+            #     for i in xrange(1,N):
+            #         x += y[i]
+            #     return x
+            #4) Other way not complete
+            # cdef array.array anorms2_arr = array.array('d', sumweights)
+            # k = np.count_nonzero(anorms2_arr.data.as_doubles < np.double(jk))
+            #5) Other way - not complete
+            # #a1 = np.PyArray_SimpleNewFromData(1, 1, np.npy_intp, &ssw)
+            # a1 = PyArray_SimpleNewFromData(1, 1, np.npy_intp, reinterpret_cast<void*>(ssw));
+            # a2 = np.PyArray_SimpleNewFromData(1, a1, np.double, &sumweights)
+            # k = np.count_nonzero(a2 < np.double(jk))
+            #Random code
+            # k = np.count_nonzero(sumweights < np.double(4), dtype=DOUBLE_t
+            # f_j = mind[k]# select variable */
+            # with gil:
+            #     vec=[1,2,3]
+            #     P=[0.5,0.2,0.3]
+            #     np.random.choice(vec,size=2,replace=False, p=P)
+            #print len(self.feature_weight_np)
+            #splitter.feature_weight_np = feature_weight
+
+
+            # #Debug
+            # with gil:
+            #     print("Running outpredict....biasing features using weights")
+
+            #END outpredict
+
+
+            #outpredict
+            features_sampled[n_visited_features-1] = features[f_j]
+
+            #Debug
+            #with gil:
+            #    print "n_visited_features", n_visited_features
+            #    print "maxfeatures", max_features
+            #with gil: #debug tracking features_sampled
+            #    print "inside splitter", features[f_j], "!"
+
+	        #END outpredict
 
             if f_j < n_known_constants:
                 # f_j in the interval [n_drawn_constants, n_known_constants[
+
+                #oupredict Debug
+                # with gil:
+                #     print "features[f_j]", features[f_j]
+                #     print "f_j", f_j
+                #     print "n_drawn_constants", n_drawn_constants
+                #End outpredict Debug
+
                 tmp = features[f_j]
                 features[f_j] = features[n_drawn_constants]
                 features[n_drawn_constants] = tmp
 
+                #outpredict
+                tmp2 = feature_weight[f_j]
+                feature_weight[f_j] = feature_weight[n_drawn_constants]
+                feature_weight[n_drawn_constants] = tmp2
+                wsel = tmp2
+                #END outpredict
+
                 n_drawn_constants += 1
 
             else:
+                #outpredict Debug
+                # with gil:
+                #     print "features[f_j]", features[f_j]
+                #     print "f_j", f_j
+                #     print "n_found_constants", n_found_constants
+                #End outpredict Debug
+
                 # f_j in the interval [n_known_constants, f_i - n_found_constants[
                 f_j += n_found_constants
                 # f_j in the interval [n_total_constants, f_i[
                 current.feature = features[f_j]
+
+
+                #outpredict
+                wsel = feature_weight[f_j]
+
+                #Debug
+                # with gil:
+                #     print "features[f_j]", features[f_j]
+                #     print "f_j", f_j
+                #     print "wsel", wsel
+                #End Debug
+                #Debug
+                # with gil:
+                #      print "self.X_feature_stride", self.X_feature_stride
+                #     print "current.feature", current.feature
+                #End Debug
+
+                #END outpredict
+
 
                 # Sort samples along that feature; either by utilizing
                 # presorting, or by copying the values into an array and
@@ -414,7 +627,17 @@ cdef class BestSplitter(BaseDenseSplitter):
                             p += 1
                 else:
                     for i in range(start, end):
+                        #outpredict Debug
+                        # with gil:
+                        #     print "samples[i]", samples[i]
+                        #     print "self.X_sample_stride", self.X_sample_stride
+                        #     print "feature_offset", feature_offset
+                        #End outpredict Debug
                         Xf[i] = self.X[samples[i], current.feature]
+                        #outpredict Debug
+                        # with gil:
+                        #     print "Xf[i]", Xf[i]
+                        #End outpredict Debug
 
                     sort(Xf + start, samples + start, end - start)
 
@@ -422,12 +645,21 @@ cdef class BestSplitter(BaseDenseSplitter):
                     features[f_j] = features[n_total_constants]
                     features[n_total_constants] = current.feature
 
+                    #outpredict
+                    feature_weight[f_j] = feature_weight[n_total_constants]
+                    feature_weight[n_total_constants] = wsel
+                    #END outpredict
+
                     n_found_constants += 1
                     n_total_constants += 1
 
                 else:
                     f_i -= 1
                     features[f_i], features[f_j] = features[f_j], features[f_i]
+
+                    #outpredict
+                    feature_weight[f_i], feature_weight[f_j] = feature_weight[f_j], feature_weight[f_i]
+                    #END outpredict
 
                     # Evaluate all splits
                     self.criterion.reset()
@@ -509,6 +741,26 @@ cdef class BestSplitter(BaseDenseSplitter):
         memcpy(constant_features + n_known_constants,
                features + n_known_constants,
                sizeof(SIZE_t) * n_found_constants)
+
+
+
+        #outpredict Debug
+        # with gil:
+        #      print "best", best
+        #      print "n_total_constants", n_total_constants
+        #End outpredict Debug
+
+
+        #outpredict
+        # split2_current.features_sampled = features_sampled
+        # split2[0] = split2_current
+        with gil:
+              #free(sumweights)
+              free(mind)
+              free(features_sampled)
+        #END outpredict
+
+
 
         # Return values
         split[0] = best
@@ -640,8 +892,9 @@ cdef class RandomSplitter(BaseDenseSplitter):
                                  self.random_state,
                                  self.presort), self.__getstate__())
 
+    #outpredict - add SplitRecord2* split2 to function
     cdef int node_split(self, double impurity, SplitRecord* split,
-                        SIZE_t* n_constant_features) nogil except -1:
+                        SIZE_t* n_constant_features) nogil except -1:#, SplitRecord2* split2) nogil except -1:
         """Find the best random split on node samples[start:end]
 
         Returns -1 in case of failure to allocate memory (and raise MemoryError)
@@ -878,6 +1131,7 @@ cdef class BaseSparseSplitter(Splitter):
                   object X,
                   const DOUBLE_t[:, ::1] y,
                   DOUBLE_t* sample_weight,
+                  DOUBLE_t* feature_weight,
                   np.ndarray X_idx_sorted=None) except -1:
         """Initialize the splitter
 
@@ -885,7 +1139,7 @@ cdef class BaseSparseSplitter(Splitter):
         or 0 otherwise.
         """
         # Call parent init
-        Splitter.init(self, X, y, sample_weight)
+        Splitter.init(self, X, y, sample_weight, feature_weight)
 
         if not isinstance(X, csc_matrix):
             raise ValueError("X should be in csc format")
@@ -1178,9 +1432,9 @@ cdef class BestSparseSplitter(BaseSparseSplitter):
                                      self.min_weight_leaf,
                                      self.random_state,
                                      self.presort), self.__getstate__())
-
+    #outpredict - add SplitRecord2* split2 to function
     cdef int node_split(self, double impurity, SplitRecord* split,
-                        SIZE_t* n_constant_features) nogil except -1:
+                        SIZE_t* n_constant_features) nogil except -1:#, SplitRecord2* split2) nogil except -1:
         """Find the best split on node samples[start:end], using sparse features
 
         Returns -1 in case of failure to allocate memory (and raise MemoryError)
@@ -1234,6 +1488,34 @@ cdef class BestSparseSplitter(BaseSparseSplitter):
         cdef SIZE_t start_positive
         cdef SIZE_t end_negative
 
+
+        #outpredict
+        cdef DOUBLE_t*  feature_weight = self.feature_weight
+
+        cdef SIZE_t ssw
+        cdef SIZE_t num_feat_to_sample
+
+        cdef SIZE_t k
+        cdef SIZE_t kk
+        cdef DOUBLE_t jk
+
+        cdef DOUBLE_t wsel
+        cdef DOUBLE_t tmp2
+
+        #cdef DOUBLE_t* sumweights = NULL
+        cdef SIZE_t* mind = NULL
+
+        # cdef SplitRecord2 split2_current
+        cdef DOUBLE_t* features_sampled = NULL # Array containing all the features sampled
+
+        with gil:
+            features_sampled = safe_realloc(&features_sampled, self.n_features)
+
+        with gil:
+            sumweights_nd = []
+        #END outpredict
+
+
         # Sample up to max_features without replacement using a
         # Fisher-Yates-based algorithm (using the local variables `f_i` and
         # `f_j` to compute a permutation of the `features` array).
@@ -1262,15 +1544,84 @@ cdef class BestSparseSplitter(BaseSparseSplitter):
             # - [f_i:n_features[ holds features that have been drawn
             #   and aren't constant.
 
-            # Draw a feature at random
-            f_j = rand_int(n_drawn_constants, f_i - n_found_constants,
-                           random_state)
+            #outpredict
+            # # Draw a feature at random
+            # f_j = rand_int(n_drawn_constants, f_i - n_found_constants,
+            #                random_state)
+
+
+
+            #outpredict ***************************************************
+
+            #feature_weight, weights vector for all features:
+
+            #Num of features to sample from:
+            num_feat_to_sample = f_i - n_found_constants - n_drawn_constants
+
+
+            with gil:
+                #sumweights = safe_realloc(&sumweights, ssw)
+                mind = safe_realloc(&mind, num_feat_to_sample)
+
+
+            #sumweights[0] = 0.0
+            with gil:
+                sumweights_nd.append(0)
+
+
+            #We sample weights in the intervals [n_drawn_constants:n_known_constants[...
+            kk = 0
+            for k in range(n_drawn_constants, n_known_constants):
+                    with gil:
+                        sumweights_nd.append(feature_weight[k]+sumweights_nd[kk])
+                    #sumweights[kk+1]=feature_weight[k]+sumweights[kk]
+                    # change feature_weight to random(1,100)
+                    mind[kk] = k
+                    kk+=1
+                    # compute cumulative
+
+            #and in the interval [n_total_constants, f_i[
+            for k in range(n_total_constants, f_i):
+                    with gil:
+                        sumweights_nd.append(feature_weight[k]+sumweights_nd[kk])
+                    #sumweights[kk+1]=feature_weight[k]+sumweights[kk]
+                    mind[kk]= k - n_found_constants
+                    kk+=1
+                    # compute cumulative
+
+
+            #Generate a number between 0 and sumweights[-1]
+            with gil:
+                jk = rand_uniform(0, sumweights_nd[num_feat_to_sample], random_state)
+
+            with gil:
+                #k=1
+                #k = np.sum(np.asarray(sumweights_nd) < jk) #Find the index of the first weight over a random value.
+                for k in range(num_feat_to_sample):
+                    if (sumweights_nd[k+1] >= jk):
+                        if (sumweights_nd[k] <= jk):
+                            f_j=mind[k]# select variable */
+            #f_j = mind[k]# select variable */
+
+            features_sampled[n_visited_features-1] = features[f_j]
+
+	        #END outpredict
+
+
 
             if f_j < n_known_constants:
                 # f_j in the interval [n_drawn_constants, n_known_constants[
                 tmp = features[f_j]
                 features[f_j] = features[n_drawn_constants]
                 features[n_drawn_constants] = tmp
+
+                #outpredict
+                tmp2 = feature_weight[f_j]
+                feature_weight[f_j] = feature_weight[n_drawn_constants]
+                feature_weight[n_drawn_constants] = tmp2
+                wsel = tmp2
+                #END outpredict
+
 
                 n_drawn_constants += 1
 
@@ -1280,6 +1631,11 @@ cdef class BestSparseSplitter(BaseSparseSplitter):
                 # f_j in the interval [n_total_constants, f_i[
 
                 current.feature = features[f_j]
+
+                #outpredict
+                wsel = feature_weight[f_j]
+                #END outpredict
+
                 self.extract_nnz(current.feature,
                                  &end_negative, &start_positive,
                                  &is_samples_sorted)
@@ -1308,9 +1664,15 @@ cdef class BestSparseSplitter(BaseSparseSplitter):
                     features[f_j] = features[n_total_constants]
                     features[n_total_constants] = current.feature
 
+
+                    #outpredict
+                    feature_weight[f_j] = feature_weight[n_total_constants]
+                    feature_weight[n_total_constants] = wsel
+                    #END outpredict
+
+
                     n_found_constants += 1
                     n_total_constants += 1
-
                 else:
                     f_i -= 1
                     features[f_i], features[f_j] = features[f_j], features[f_i]
@@ -1398,7 +1760,23 @@ cdef class BestSparseSplitter(BaseSparseSplitter):
         # Return values
         split[0] = best
         n_constant_features[0] = n_total_constants
+
+
+        #outpredict
+        with gil:
+              #free(sumweights)
+              free(mind)
+              free(features_sampled)
+        #END outpredict
+
         return 0
+
+
+
+
+
+
+
 
 
 cdef class RandomSparseSplitter(BaseSparseSplitter):
@@ -1412,8 +1790,9 @@ cdef class RandomSparseSplitter(BaseSparseSplitter):
                                        self.random_state,
                                        self.presort), self.__getstate__())
 
+    #outpredict - add SplitRecord2* split2 to function
     cdef int node_split(self, double impurity, SplitRecord* split,
-                        SIZE_t* n_constant_features) nogil except -1:
+                        SIZE_t* n_constant_features) nogil except -1:#, SplitRecord2* split2) nogil except -1:
         """Find a random split on node samples[start:end], using sparse features
 
         Returns -1 in case of failure to allocate memory (and raise MemoryError)
